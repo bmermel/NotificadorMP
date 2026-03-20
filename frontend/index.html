@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alertas Mercado Pago</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <h1>Alertas de Transferencias</h1>
+      <div id="estadoConexion" class="estado offline">Desconectado</div>
+    </header>
+
+    <main class="contenido">
+      <section class="panel-principal">
+        <h2>Última alerta</h2>
+        <div id="ultimaAlerta" class="ultima-alerta vacia">
+          Esperando transferencias...
+        </div>
+
+        <div class="campo-prueba">
+          <label class="campo-prueba-line">
+            <span>Monto</span>
+            <input type="number" id="pruebaMonto" value="18750" step="any" />
+          </label>
+          <label class="campo-prueba-line">
+            <span>Mensaje</span>
+            <input type="text" id="pruebaMensaje" value="Alerta de prueba" />
+          </label>
+          <label class="campo-prueba-line">
+            <span>Titular</span>
+            <input type="text" id="pruebaTitular" placeholder="Opcional" />
+          </label>
+        </div>
+
+        <button type="button" id="btnPrueba">Probar alerta</button>
+      </section>
+
+      <section class="historial-panel">
+        <h2>Historial</h2>
+        <div id="historial" class="historial"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="overlay" class="overlay oculto">
+    <div class="overlay-contenido">
+      <div class="overlay-titulo">TRANSFERENCIA RECIBIDA</div>
+      <div id="overlayMonto" class="overlay-monto">$0</div>
+      <div id="overlayTexto" class="overlay-texto"></div>
+      <div id="overlayTitular" class="overlay-titular"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

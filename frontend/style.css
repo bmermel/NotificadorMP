@@ -1,0 +1,255 @@
+* {
+    box-sizing: border-box;
+  }
+  
+  body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #0f172a;
+    color: white;
+  }
+  
+  #app {
+    min-height: 100vh;
+    padding: 24px;
+  }
+  
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  
+  .topbar h1 {
+    margin: 0;
+    font-size: 32px;
+  }
+  
+  .estado {
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-weight: bold;
+  }
+  
+  .estado.online {
+    background: #14532d;
+    color: #bbf7d0;
+  }
+  
+  .estado.offline {
+    background: #7f1d1d;
+    color: #fecaca;
+  }
+
+  .estado.reconnecting {
+    background: #713f12;
+    color: #fde68a;
+  }
+  
+  .contenido {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 24px;
+  }
+  
+  .panel-principal,
+  .historial-panel {
+    background: #111827;
+    border-radius: 16px;
+    padding: 24px;
+  }
+  
+  .ultima-alerta {
+    margin-top: 16px;
+    background: #1f2937;
+    border-radius: 12px;
+    padding: 20px;
+    font-size: 26px;
+    min-height: 100px;
+    display: flex;
+    align-items: center;
+  }
+  
+  .ultima-alerta.vacia {
+    color: #9ca3af;
+  }
+
+  .ultima-titular {
+    margin-top: 8px;
+    font-size: 20px;
+    color: #e2e8f0;
+  }
+
+  .ultima-meta {
+    margin-top: 10px;
+    font-size: 14px;
+    color: #9ca3af;
+  }
+
+  .ultima-origen {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: #334155;
+    color: #e2e8f0;
+    font-size: 12px;
+    font-weight: bold;
+  }
+
+  .campo-prueba {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+    color: #cbd5e1;
+  }
+
+  .campo-prueba-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .campo-prueba-line span {
+    min-width: 72px;
+  }
+
+  .campo-prueba-line input {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #374151;
+    background: #1f2937;
+    color: #f9fafb;
+    font-size: 14px;
+  }
+  
+  button {
+    margin-top: 20px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  
+  button:hover {
+    opacity: 0.92;
+  }
+  
+  .historial {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  
+  .historial-item {
+    background: #1f2937;
+    border-left: 5px solid #22c55e;
+    padding: 14px;
+    border-radius: 10px;
+  }
+
+  .historial-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .historial-origen {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: #334155;
+    color: #a5b4fc;
+  }
+  
+  .historial-item .monto {
+    font-size: 24px;
+    font-weight: bold;
+    text-align: right;
+  }
+
+  .historial-item .titular-line {
+    font-size: 17px;
+    color: #f1f5f9;
+    margin-bottom: 4px;
+  }
+  
+  .historial-item .detalle {
+    color: #cbd5e1;
+  }
+
+  .historial-item .detalle.fecha {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-top: 6px;
+  }
+  
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.82);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+  }
+  
+  .overlay.oculto {
+    display: none;
+  }
+  
+  .overlay-contenido {
+    text-align: center;
+    background: #111827;
+    padding: 40px;
+    border-radius: 24px;
+    width: min(90vw, 700px);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.4);
+  }
+  
+  .overlay-titulo {
+    font-size: 34px;
+    font-weight: bold;
+    color: #22c55e;
+  }
+  
+  .overlay-monto {
+    font-size: 72px;
+    font-weight: bold;
+    margin: 20px 0;
+  }
+  
+  .overlay-texto {
+    font-size: 26px;
+    color: #e5e7eb;
+  }
+
+  .overlay-titular {
+    margin-top: 16px;
+    font-size: 18px;
+    color: #94a3b8;
+    font-weight: normal;
+  }
+  
+  @media (max-width: 900px) {
+    .contenido {
+      grid-template-columns: 1fr;
+    }
+  
+    .overlay-monto {
+      font-size: 52px;
+    }
+  }
