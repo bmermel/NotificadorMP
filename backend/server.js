@@ -86,6 +86,30 @@ app.get("/health", (req, res) => {
   res.json({ ok: true, service: "mp-alertas-recepcion" });
 });
 
+function envBool(name, defaultValue) {
+  const v = process.env[name];
+  if (v === undefined || v === "") return defaultValue;
+  return String(v).toLowerCase() === "true" || v === "1";
+}
+
+function secretConfigured(name) {
+  const v = process.env[name];
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+/** Diagnóstico sin exponer valores de secretos ni tokens. */
+app.get("/debug/env-safe", (req, res) => {
+  const portRaw = process.env.PORT;
+  res.json({
+    ok: true,
+    port: portRaw === undefined || portRaw === "" ? null : String(portRaw),
+    accessTokenConfigured: secretConfigured("MP_ACCESS_TOKEN"),
+    webhookSecretConfigured: secretConfigured("MP_WEBHOOK_SECRET"),
+    signatureValidationEnabled: envBool("MP_USE_SIGNATURE_VALIDATION", false),
+    nodeEnv: process.env.NODE_ENV || null,
+  });
+});
+
 /**
  * Webhook real Mercado Pago (notificaciones payment + API de pagos).
  * Simulación local: ver README o .env.example. Pruebas manuales: POST /api/alerta-prueba
@@ -132,6 +156,7 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`[servidor] http://localhost:${PORT}`);
   console.log(`[servidor] GET  /health`);
+  console.log(`[servidor] GET  /debug/env-safe`);
   console.log(`[servidor] POST /webhooks/mercadopago (Mercado Pago real)`);
   console.log(
     `[servidor] POST /api/alerta-prueba (body: monto, mensaje?, titular?)`
