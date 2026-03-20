@@ -83,6 +83,8 @@ function emitirAlerta(alerta, contextoLog) {
   io.emit("nueva-transferencia", alerta);
 }
 
+const transferMonitor = createTransferMonitor({ emitirAlerta });
+
 app.get("/health", (req, res) => {
   res.json({ ok: true, service: "mp-alertas-recepcion" });
 });
@@ -109,6 +111,24 @@ app.get("/debug/env-safe", (req, res) => {
     signatureValidationEnabled: envBool("MP_USE_SIGNATURE_VALIDATION", false),
     nodeEnv: process.env.NODE_ENV || null,
   });
+});
+
+app.get("/debug/transfer-monitor", (req, res) => {
+  try {
+    const snap = transferMonitor.getSnapshot();
+    res.json(snap);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "snapshot" });
+  }
+});
+
+app.post("/debug/transfer-monitor/run-once", async (req, res) => {
+  try {
+    const out = await transferMonitor.runOnce();
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
 });
 
 const webhookPaymentEnabled = envBool("MP_WEBHOOK_PAYMENT_ENABLED", true);
@@ -159,12 +179,13 @@ io.on("connection", (socket) => {
 app.use(express.static(path.join(__dirname, "..", "frontend")));
 
 const PORT = process.env.PORT || 3001;
-const transferMonitor = createTransferMonitor({ emitirAlerta });
 
 server.listen(PORT, () => {
   console.log(`[servidor] http://localhost:${PORT}`);
   console.log(`[servidor] GET  /health`);
   console.log(`[servidor] GET  /debug/env-safe`);
+  console.log(`[servidor] GET  /debug/transfer-monitor`);
+  console.log(`[servidor] POST /debug/transfer-monitor/run-once`);
   console.log(`[servidor] POST /webhooks/mercadopago (Mercado Pago real)`);
   console.log(
     `[servidor] POST /api/alerta-prueba (body: monto, mensaje?, titular?)`

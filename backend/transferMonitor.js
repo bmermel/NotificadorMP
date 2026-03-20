@@ -90,7 +90,10 @@ function httpsGetJson(urlStr, headers) {
   });
 }
 
-async function mpGetJson(urlStr, token) {
+/**
+ * GET Mercado Pago JSON con código HTTP visible para auditoría.
+ */
+async function mpGetJsonWithStatus(urlStr, token) {
   const headers = {
     Authorization: "Bearer " + token,
     "Content-Type": "application/json",
@@ -102,19 +105,20 @@ async function mpGetJson(urlStr, token) {
     res = await httpsGetJson(urlStr, headers);
   }
   const text = await res.text();
+  const status = res.status;
   let json;
   try {
     json = text ? JSON.parse(text) : {};
   } catch (_) {
-    json = { raw: text };
+    json = { parseError: true, rawPreview: text.slice(0, 500) };
   }
   if (!res.ok) {
-    const err = new Error("Mercado Pago API HTTP " + res.status);
-    err.status = res.status;
+    const err = new Error("Mercado Pago API HTTP " + status);
+    err.status = status;
     err.body = json;
     throw err;
   }
-  return json;
+  return { status: status, json: json };
 }
 
 function parseAmount(raw) {
@@ -137,7 +141,6 @@ function buildTitular(payer) {
   return "Titular no informado";
 }
 
-/** Email parcialmente enmascarado para logs (no exponer dirección completa). */
 function maskEmail(email) {
   const s = String(email || "").trim();
   if (!s) return null;
@@ -149,7 +152,6 @@ function maskEmail(email) {
   return show + "***@" + domain;
 }
 
-/** Nombre resumido sin datos completos (solo iniciales / prefijos). */
 function maskNombreParte(part) {
   const t = String(part || "").trim();
   if (!t) return null;
@@ -159,44 +161,103 @@ function maskNombreParte(part) {
 
 function payerResumenParaLog(payer) {
   if (!payer || typeof payer !== "object") return { email: null, nombre: null };
-  const email = maskEmail(payer.email);
-  const fn = maskNombreParte(payer.first_name);
-  const ln = maskNombreParte(payer.last_name);
-  const nombre =
-    fn && ln ? fn + " " + ln : fn || ln || null;
-  return { email: email, nombre: nombre };
+  return {
+    email: maskEmail(payer.email),
+    nombre:
+      maskNombreParte(payer.first_name) && maskNombreParte(payer.last_name)
+        ? maskNombreParte(payer.first_name) + " " + maskNombreParte(payer.last_name)
+        : maskNombreParte(payer.first_name) || maskNombreParte(payer.last_name),
+  };
 }
 
-function logResumenMovimiento(debug, prefix, payment) {
+/** JSON truncado; enmascara emails en strings para LOG_RAW más seguro. */
+function truncateRawPayment(payment, maxLen) {
+  let s = JSON.stringify(payment);
+  s = s.replace(
+    /"email"\s*:\s*"([^"\\]*)"/gi,
+    function (_m, em) {
+      return '"email":"' + (maskEmail(em) || "***") + '"';
+    }
+  );
+  if (s.length > maxLen) {
+    return s.slice(0, maxLen) + "...[truncado " + s.length + " chars]";
+  }
+  return s;
+}
+
+function logMovimientoDebug(debug, logRaw, payment) {
   if (!debug || !payment || typeof payment !== "object") return;
   const pr = payerResumenParaLog(payment.payer);
-  console.log(prefix, {
+  const row = {
     id: payment.id,
     status: payment.status,
+    status_detail: payment.status_detail,
     payment_type_id: payment.payment_type_id,
     operation_type: payment.operation_type,
     transaction_amount: payment.transaction_amount,
+    transaction_amount_refunded: payment.transaction_amount_refunded,
     date_created: payment.date_created,
+    date_approved: payment.date_approved,
+    money_release_date: payment.money_release_date,
+    description: payment.description,
+    external_reference: payment.external_reference,
     payer_email: pr.email,
-    payer_nombre: pr.nombre,
-  });
+    payer_first_name: maskNombreParte(
+      payment.payer && payment.payer.first_name
+    ),
+    payer_last_name: maskNombreParte(
+      payment.payer && payment.payer.last_name
+    ),
+    collector_id: payment.collector_id,
+    live_mode: payment.live_mode,
+    currency_id: payment.currency_id,
+    payment_method_id: payment.payment_method_id,
+  };
+  console.log("[transfer-monitor][debug] resumen movimiento", row);
+  if (logRaw) {
+    console.log(
+      "[transfer-monitor][debug] raw(truncado)=",
+      truncateRawPayment(payment, 4000)
+    );
+  }
 }
 
-function looksLikeIncomingTransfer(payment, allowedTypes) {
+/**
+ * Evalúa si el pago parece una transferencia entrante acreditada.
+ * reasonCode sirve para agrupar en informes.
+ */
+function looksLikeIncomingTransfer(payment, allowedTypes, windowBeginMs) {
   if (!payment || typeof payment !== "object") {
-    return { ok: false, reason: "objeto de pago inválido" };
+    return {
+      ok: false,
+      reason: "objeto de pago inválido",
+      reasonCode: "invalid_object",
+    };
+  }
+  if (payment.date_created) {
+    const dc = new Date(payment.date_created).getTime();
+    if (!isNaN(dc) && dc < windowBeginMs) {
+      return {
+        ok: false,
+        reason:
+          "date_created anterior a la ventana begin_date del search (posible inconsistencia o caché)",
+        reasonCode: "date_before_window",
+      };
+    }
   }
   const status = String(payment.status || "").toLowerCase();
   if (status !== "approved") {
     return {
       ok: false,
       reason: "status no es 'approved' (actual: '" + (payment.status || "") + "')",
+      reasonCode: "not_approved",
     };
   }
   if (String(payment.operation_type || "").toLowerCase() === "money_out") {
     return {
       ok: false,
-      reason: "operation_type es 'money_out' (egreso; no se trata como ingreso)",
+      reason: "operation_type es 'money_out' (egreso)",
+      reasonCode: "operation_money_out",
     };
   }
   const type = String(payment.payment_type_id || "").toLowerCase();
@@ -209,6 +270,7 @@ function looksLikeIncomingTransfer(payment, allowedTypes) {
         "' no está en MP_TRANSFER_ALLOWED_PAYMENT_TYPES [" +
         allowedTypes.join(",") +
         "]",
+      reasonCode: "payment_type_not_allowed",
     };
   }
   const amount = parseAmount(payment.transaction_amount);
@@ -216,21 +278,22 @@ function looksLikeIncomingTransfer(payment, allowedTypes) {
     return {
       ok: false,
       reason: "transaction_amount inválido o <= 0",
+      reasonCode: "invalid_amount",
     };
   }
   var acceptReason =
-    "cumple: status=approved; operation_type≠money_out; monto>0";
+    "cumple: status=approved; operation_type≠money_out; monto>0; fecha dentro de ventana o sin date_created";
   if (allowedTypes.length > 0) {
     acceptReason +=
       "; payment_type_id '" +
       type +
-      "' permitido [" +
+      "' ∈ [" +
       allowedTypes.join(",") +
       "]";
   } else {
-    acceptReason += "; sin filtro por payment_type_id (lista vacía)";
+    acceptReason += "; lista MP_TRANSFER_ALLOWED_PAYMENT_TYPES vacía (no filtra tipo)";
   }
-  return { ok: true, acceptReason: acceptReason };
+  return { ok: true, acceptReason: acceptReason, reasonCode: "accepted" };
 }
 
 function normalizeTransferToAlert(payment) {
@@ -258,17 +321,20 @@ function buildPaymentsSearchUrl(opts) {
   const u = new URL("https://api.mercadopago.com/v1/payments/search");
   const now = Date.now();
   const fromIso = new Date(now - opts.lookbackMs).toISOString();
+  const toIso = new Date(now).toISOString();
   u.searchParams.set("sort", "date_created");
   u.searchParams.set("criteria", "desc");
   u.searchParams.set("range", "date_created");
   u.searchParams.set("begin_date", fromIso);
-  u.searchParams.set("end_date", new Date(now).toISOString());
+  u.searchParams.set("end_date", toIso);
   u.searchParams.set("limit", String(opts.limit));
-  return u.toString();
+  return { url: u.toString(), beginIso: fromIso, endIso: toIso };
 }
 
 function createTransferMonitor(config) {
-  const token = process.env.MP_ACCESS_TOKEN ? String(process.env.MP_ACCESS_TOKEN).trim() : "";
+  const token = process.env.MP_ACCESS_TOKEN
+    ? String(process.env.MP_ACCESS_TOKEN).trim()
+    : "";
   const enabled = envBool("MP_TRANSFER_MONITOR_ENABLED", false);
   const intervalMs = envInt("MP_TRANSFER_MONITOR_INTERVAL_MS", 30000);
   const lookbackMs = envInt("MP_TRANSFER_MONITOR_LOOKBACK_MS", 24 * 60 * 60 * 1000);
@@ -282,142 +348,361 @@ function createTransferMonitor(config) {
     process.env.MP_TRANSFER_MONITOR_STATE_FILE ||
     path.join(__dirname, "data", "transfer-monitor-state.json");
   const debug = envBool("MP_TRANSFER_MONITOR_DEBUG", false);
+  const logRaw = envBool("MP_TRANSFER_MONITOR_LOG_RAW", false);
 
   let timer = null;
   let running = false;
+  let started = false;
   const loaded = readState(stateFile);
   const processedIds = new Set(loaded.ids);
+
+  const audit = {
+    lastRunAt: null,
+    lastSuccessAt: null,
+    lastErrorAt: null,
+    lastErrorMessage: null,
+    lastHttpStatus: null,
+    lastFetchedCount: 0,
+    lastAcceptedCount: 0,
+    lastRejectedCount: 0,
+    lastPaging: null,
+    lastSearchParams: null,
+    lastCycleLabel: null,
+  };
 
   function saveIds() {
     const ids = Array.from(processedIds).slice(-maxProcessed);
     writeState(stateFile, { ids, lastScanAt: new Date().toISOString() });
   }
 
-  async function tick() {
-    if (running) return;
-    running = true;
+  function bumpReject(map, code) {
+    map[code] = (map[code] || 0) + 1;
+  }
+
+  /**
+   * Un ciclo completo: consulta MP, evalúa ítems, emite alertas.
+   * @param {{ label: string, emitAlerts?: boolean }} opts
+   */
+  async function runCycle(opts) {
+    const label = opts.label || "cycle";
+    const emitAlerts = opts.emitAlerts !== false;
+    const windowBeginMs = Date.now() - lookbackMs;
+
+    const rejectReasons = {};
+    const acceptedIds = [];
+    const rejectedIds = [];
+    let emitted = 0;
+
+    const t0 = new Date().toISOString();
+    audit.lastRunAt = t0;
+    audit.lastCycleLabel = label;
+
+    console.log(
+      "[transfer-monitor] ========== CICLO INICIO [" + label + "] " + t0 + " =========="
+    );
+
+    if (!enabled) {
+      console.log("[transfer-monitor] omitido: MP_TRANSFER_MONITOR_ENABLED=false");
+      audit.lastErrorMessage = "monitor deshabilitado por configuración";
+      return {
+        ok: false,
+        skipped: true,
+        reason: "monitor_disabled",
+        rejectReasons: {},
+        acceptedIds: [],
+        rejectedIds: [],
+        fetched: 0,
+        accepted: 0,
+        rejected: 0,
+      };
+    }
+
+    if (!token) {
+      const msg = "MP_ACCESS_TOKEN no configurado";
+      console.warn("[transfer-monitor]", msg);
+      audit.lastErrorAt = new Date().toISOString();
+      audit.lastErrorMessage = msg;
+      return {
+        ok: false,
+        error: msg,
+        rejectReasons: {},
+        acceptedIds: [],
+        rejectedIds: [],
+        fetched: 0,
+        accepted: 0,
+        rejected: 0,
+      };
+    }
+
+    const built = buildPaymentsSearchUrl({ lookbackMs, limit });
+    const url = built.url;
+    const uObj = new URL(url);
+    const paramsFlat = {
+      sort: uObj.searchParams.get("sort"),
+      criteria: uObj.searchParams.get("criteria"),
+      range: uObj.searchParams.get("range"),
+      begin_date: uObj.searchParams.get("begin_date"),
+      end_date: uObj.searchParams.get("end_date"),
+      limit: uObj.searchParams.get("limit"),
+    };
+    audit.lastSearchParams = paramsFlat;
+
+    console.log("[transfer-monitor] consulta API: GET /v1/payments/search");
+    console.log("[transfer-monitor] parámetros:", JSON.stringify(paramsFlat));
+    console.log("[transfer-monitor] lookbackMs=", lookbackMs, "intervalMs=", intervalMs);
+
+    let httpStatus;
+    let data;
     try {
-      if (!enabled) return;
-      if (!token) {
-        console.warn("[transfer-monitor] MP_ACCESS_TOKEN no configurado, monitor inactivo.");
-        return;
+      const res = await mpGetJsonWithStatus(url, token);
+      httpStatus = res.status;
+      data = res.json;
+      audit.lastHttpStatus = httpStatus;
+      console.log(
+        "[transfer-monitor] respuesta HTTP",
+        httpStatus,
+        "(esperado 200 para cuerpo JSON)"
+      );
+    } catch (e) {
+      audit.lastErrorAt = new Date().toISOString();
+      audit.lastErrorMessage = e.message || String(e);
+      audit.lastHttpStatus = e.status != null ? e.status : audit.lastHttpStatus;
+      console.error(
+        "[transfer-monitor] error HTTP/API:",
+        e.message,
+        e.body ? JSON.stringify(e.body).slice(0, 800) : ""
+      );
+      throw e;
+    }
+
+    const paging = data && data.paging ? data.paging : null;
+    audit.lastPaging = paging;
+    if (paging) {
+      console.log("[transfer-monitor] paging:", JSON.stringify(paging));
+    }
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    audit.lastFetchedCount = results.length;
+
+    if (results.length === 0) {
+      console.warn(
+        "[transfer-monitor] results vacío: no hay pagos en la ventana o el token no devolvió resultados."
+      );
+    } else {
+      console.log("[transfer-monitor] resultados útiles: cantidad=", results.length);
+    }
+
+    const asc = results.slice().reverse();
+    for (let i = 0; i < asc.length; i++) {
+      const p = asc[i];
+      const id = p && p.id != null ? String(p.id) : null;
+      if (!id) {
+        if (debug) {
+          console.warn("[transfer-monitor][debug] ítem sin id, se omite");
+        }
+        bumpReject(rejectReasons, "missing_id");
+        continue;
       }
 
-      const url = buildPaymentsSearchUrl({ lookbackMs, limit });
-      console.log("[transfer-monitor] consultando:", url);
-      const data = await mpGetJson(url, token);
-      const results = Array.isArray(data.results) ? data.results : [];
-      console.log("[transfer-monitor] pagos recibidos:", results.length);
+      if (debug) {
+        logMovimientoDebug(debug, logRaw, p);
+      }
 
-      // Recorrer del más viejo al más nuevo para emitir alertas en orden cronológico.
-      const asc = results.slice().reverse();
-      let emitted = 0;
-      for (let i = 0; i < asc.length; i++) {
-        const p = asc[i];
-        const id = p && p.id != null ? String(p.id) : null;
-        if (!id) {
-          if (debug) {
-            console.warn(
-              "[transfer-monitor][debug] movimiento sin id, se omite"
-            );
-          }
-          continue;
-        }
-
-        if (debug) {
-          logResumenMovimiento(
-            debug,
-            "[transfer-monitor][debug] movimiento",
-            p
-          );
-        }
-
-        if (processedIds.has(id)) {
-          if (debug) {
-            console.log(
-              "[transfer-monitor][debug] id=" +
-                id +
-                " DESCARTADO: ya procesado (deduplicación)"
-            );
-          }
-          continue;
-        }
-
-        const transferCheck = looksLikeIncomingTransfer(p, allowedTypes);
-        if (!transferCheck.ok) {
-          if (debug) {
-            console.log(
-              "[transfer-monitor][debug] id=" +
-                id +
-                " DESCARTADO: " +
-                transferCheck.reason
-            );
-          } else {
-            console.log(
-              "[transfer-monitor] skip payment",
-              id,
-              "-",
-              transferCheck.reason
-            );
-          }
-          processedIds.add(id);
-          continue;
-        }
-
-        const mapped = normalizeTransferToAlert(p);
-        if (!mapped.alert || mapped.alert.monto == null) {
-          if (debug) {
-            console.warn(
-              "[transfer-monitor][debug] id=" +
-                id +
-                " DESCARTADO: normalización sin monto válido"
-            );
-          } else {
-            console.warn("[transfer-monitor] skip payment sin datos válidos:", id);
-          }
-          processedIds.add(id);
-          continue;
-        }
-
+      if (processedIds.has(id)) {
         if (debug) {
           console.log(
             "[transfer-monitor][debug] id=" +
               id +
-              " ACEPTADO como transferencia: " +
-              (transferCheck.acceptReason || "criterios cumplidos")
+              " DESCARTADO [duplicate]: ya en cola procesada (deduplicación)"
+          );
+        } else {
+          console.log("[transfer-monitor] skip id=" + id + " duplicate");
+        }
+        rejectedIds.push(id);
+        bumpReject(rejectReasons, "duplicate");
+        continue;
+      }
+
+      const transferCheck = looksLikeIncomingTransfer(
+        p,
+        allowedTypes,
+        windowBeginMs
+      );
+      if (!transferCheck.ok) {
+        const code = transferCheck.reasonCode || "rejected";
+        if (debug) {
+          console.log(
+            "[transfer-monitor][debug] id=" +
+              id +
+              " DESCARTADO [" +
+              code +
+              "]: " +
+              transferCheck.reason
+          );
+        } else {
+          console.log(
+            "[transfer-monitor] skip id=" + id + " - " + transferCheck.reason
           );
         }
-
-        config.emitirAlerta(mapped.alert, "transfer-monitor payment " + id);
         processedIds.add(id);
-        emitted += 1;
+        rejectedIds.push(id);
+        bumpReject(rejectReasons, code);
+        continue;
       }
 
-      // Limitar tamaño en memoria y disco.
-      if (processedIds.size > maxProcessed) {
-        const tail = Array.from(processedIds).slice(-maxProcessed);
-        processedIds.clear();
-        tail.forEach((id) => processedIds.add(id));
+      const mapped = normalizeTransferToAlert(p);
+      if (!mapped.alert || mapped.alert.monto == null) {
+        const code = "normalize_failed";
+        if (debug) {
+          console.warn(
+            "[transfer-monitor][debug] id=" +
+              id +
+              " DESCARTADO [" +
+              code +
+              "]: normalización sin monto"
+          );
+        } else {
+          console.warn("[transfer-monitor] skip id=" + id + " normalize_failed");
+        }
+        processedIds.add(id);
+        rejectedIds.push(id);
+        bumpReject(rejectReasons, code);
+        continue;
       }
-      saveIds();
-      console.log("[transfer-monitor] ciclo completo. nuevas alertas:", emitted);
+
+      if (debug) {
+        console.log(
+          "[transfer-monitor][debug] id=" +
+            id +
+            " ACEPTADO [transferencia]: " +
+            (transferCheck.acceptReason || "")
+        );
+      }
+
+      if (emitAlerts) {
+        config.emitirAlerta(mapped.alert, "transfer-monitor payment " + id);
+      }
+      processedIds.add(id);
+      acceptedIds.push(id);
+      emitted += 1;
+    }
+
+    if (processedIds.size > maxProcessed) {
+      const tail = Array.from(processedIds).slice(-maxProcessed);
+      processedIds.clear();
+      tail.forEach(function (x) {
+        processedIds.add(x);
+      });
+    }
+    saveIds();
+
+    audit.lastAcceptedCount = emitted;
+    audit.lastRejectedCount = rejectedIds.length;
+    audit.lastSuccessAt = new Date().toISOString();
+    audit.lastErrorAt = null;
+    audit.lastErrorMessage = null;
+
+    console.log(
+      "[transfer-monitor] ========== CICLO FIN [" +
+        label +
+        "] alertas nuevas=" +
+        emitted +
+        " rechazados=" +
+        rejectedIds.length +
+        " =========="
+    );
+
+    return {
+      ok: true,
+      httpStatus: httpStatus,
+      fetched: results.length,
+      accepted: emitted,
+      rejected: rejectedIds.length,
+      rejectReasons: rejectReasons,
+      acceptedIds: acceptedIds,
+      rejectedIds: rejectedIds,
+      paging: paging,
+    };
+  }
+
+  async function tick() {
+    if (running) {
+      console.warn("[transfer-monitor] ciclo omitido: ya hay una ejecución en curso");
+      return;
+    }
+    running = true;
+    try {
+      await runCycle({ label: "interval", emitAlerts: true });
     } catch (e) {
-      console.error("[transfer-monitor] error en polling:", e.message, e.body || "");
+      /* error ya logueado en runCycle */
     } finally {
       running = false;
     }
   }
 
+  async function runOnce() {
+    if (running) {
+      return {
+        ok: false,
+        busy: true,
+        message: "Otro ciclo del monitor está en ejecución",
+      };
+    }
+    running = true;
+    try {
+      const out = await runCycle({ label: "manual-run-once", emitAlerts: true });
+      return out;
+    } catch (e) {
+      return {
+        ok: false,
+        error: e.message || String(e),
+        httpStatus: e.status,
+      };
+    } finally {
+      running = false;
+    }
+  }
+
+  function getSnapshot() {
+    return {
+      ok: true,
+      started: started,
+      enabled: enabled,
+      intervalMs: intervalMs,
+      lookbackMs: lookbackMs,
+      limit: limit,
+      allowedPaymentTypes: allowedTypes.slice(),
+      processedIdsCount: processedIds.size,
+      debug: debug,
+      logRaw: logRaw,
+      lastRunAt: audit.lastRunAt,
+      lastSuccessAt: audit.lastSuccessAt,
+      lastErrorAt: audit.lastErrorAt,
+      lastErrorMessage: audit.lastErrorMessage,
+      lastHttpStatus: audit.lastHttpStatus,
+      lastFetchedCount: audit.lastFetchedCount,
+      lastAcceptedCount: audit.lastAcceptedCount,
+      lastRejectedCount: audit.lastRejectedCount,
+      lastPaging: audit.lastPaging,
+      lastSearchParams: audit.lastSearchParams,
+      lastCycleLabel: audit.lastCycleLabel,
+      stateFile: stateFile,
+      cycleRunning: running,
+    };
+  }
+
   return {
     start: function start() {
+      started = true;
       if (!enabled) {
         console.log("[transfer-monitor] deshabilitado (MP_TRANSFER_MONITOR_ENABLED=false)");
         return;
       }
-      console.log("[transfer-monitor] habilitado. intervalo(ms)=", intervalMs);
+      console.log("[transfer-monitor] ARRANQUE: monitor activo. intervalo(ms)=", intervalMs);
       console.log("[transfer-monitor] allowed payment_type_id =", allowedTypes.join(","));
       console.log("[transfer-monitor] state file =", stateFile);
-      console.log("[transfer-monitor] debug detallado =", debug);
+      console.log("[transfer-monitor] MP_TRANSFER_MONITOR_DEBUG =", debug);
+      console.log("[transfer-monitor] MP_TRANSFER_MONITOR_LOG_RAW =", logRaw);
       tick();
       timer = setInterval(tick, intervalMs);
     },
@@ -426,6 +711,8 @@ function createTransferMonitor(config) {
       timer = null;
       saveIds();
     },
+    getSnapshot: getSnapshot,
+    runOnce: runOnce,
   };
 }
 
