@@ -5,6 +5,7 @@ const express = require("express");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const { handleMercadoPagoWebhook } = require("./mercadopagoWebhook");
+const { createTransferMonitor } = require("./transferMonitor");
 require("dotenv").config();
 
 const app = express();
@@ -110,11 +111,17 @@ app.get("/debug/env-safe", (req, res) => {
   });
 });
 
+const webhookPaymentEnabled = envBool("MP_WEBHOOK_PAYMENT_ENABLED", true);
+
 /**
  * Webhook real Mercado Pago (notificaciones payment + API de pagos).
  * Simulación local: ver README o .env.example. Pruebas manuales: POST /api/alerta-prueba
  */
 app.post("/webhooks/mercadopago", async (req, res) => {
+  if (!webhookPaymentEnabled) {
+    console.log("[webhook] deshabilitado por MP_WEBHOOK_PAYMENT_ENABLED=false");
+    return res.status(200).json({ ok: true, ignored: true, reason: "webhook deshabilitado" });
+  }
   try {
     await handleMercadoPagoWebhook(req, res, { emitirAlerta, nuevoId });
   } catch (e) {
@@ -152,6 +159,7 @@ io.on("connection", (socket) => {
 app.use(express.static(path.join(__dirname, "..", "frontend")));
 
 const PORT = process.env.PORT || 3001;
+const transferMonitor = createTransferMonitor({ emitirAlerta });
 
 server.listen(PORT, () => {
   console.log(`[servidor] http://localhost:${PORT}`);
@@ -161,4 +169,6 @@ server.listen(PORT, () => {
   console.log(
     `[servidor] POST /api/alerta-prueba (body: monto, mensaje?, titular?)`
   );
+  console.log(`[servidor] MP_WEBHOOK_PAYMENT_ENABLED=${webhookPaymentEnabled}`);
+  transferMonitor.start();
 });
