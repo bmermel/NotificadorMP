@@ -131,6 +131,23 @@ app.post("/debug/transfer-monitor/run-once", async (req, res) => {
   }
 });
 
+app.get("/debug/account-movement-monitor", (req, res) => {
+  try {
+    res.json(transferMonitor.getSnapshot());
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "snapshot" });
+  }
+});
+
+app.post("/debug/account-movement-monitor/run-once", async (req, res) => {
+  try {
+    const out = await transferMonitor.runOnce();
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
 const webhookPaymentEnabled = envBool("MP_WEBHOOK_PAYMENT_ENABLED", true);
 
 /**
@@ -184,8 +201,10 @@ server.listen(PORT, () => {
   console.log(`[servidor] http://localhost:${PORT}`);
   console.log(`[servidor] GET  /health`);
   console.log(`[servidor] GET  /debug/env-safe`);
-  console.log(`[servidor] GET  /debug/transfer-monitor`);
+  console.log(`[servidor] GET  /debug/transfer-monitor (alias account-movement)`);
   console.log(`[servidor] POST /debug/transfer-monitor/run-once`);
+  console.log(`[servidor] GET  /debug/account-movement-monitor`);
+  console.log(`[servidor] POST /debug/account-movement-monitor/run-once`);
   console.log(`[servidor] POST /webhooks/mercadopago (Mercado Pago real)`);
   console.log(
     `[servidor] POST /api/alerta-prueba (body: monto, mensaje?, titular?)`
