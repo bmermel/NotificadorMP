@@ -28,8 +28,11 @@
 const crypto = require("crypto");
 const https = require("https");
 
-/** IDs de pago por los que ya se emitió alerta (evita duplicados por reintentos MP). */
-const pagosYaAlertados = new Set();
+/**
+ * Set in-memory: fast-path para deduplicación dentro de la misma sesión (reintentos MP).
+ * La deduplicación cross-sesión la maneja la DB en eventStore (vía emitirAlerta).
+ */
+const pagosYaAlertadosEnSesion = new Set();
 
 function envBool(name, defaultValue) {
   const v = process.env[name];
@@ -377,8 +380,8 @@ async function handleMercadoPagoWebhook(req, res, { emitirAlerta, nuevoId }) {
     });
   }
 
-  if (pagosYaAlertados.has(paymentId)) {
-    console.log("[mp-webhook] duplicado: ya se alertó payment id=", paymentId);
+  if (pagosYaAlertadosEnSesion.has(paymentId)) {
+    console.log("[mp-webhook] duplicado en sesión: ya se alertó payment id=", paymentId);
     return res.status(200).json({
       ok: true,
       duplicate: true,
@@ -399,10 +402,18 @@ async function handleMercadoPagoWebhook(req, res, { emitirAlerta, nuevoId }) {
     fecha: parcial.fecha,
     origen: parcial.origen,
     titular: parcial.titular,
+    // Metadatos para persistencia en DB (serializados por emitirAlerta, no llegan al cliente)
+    _provider:         'mercadopago',
+    _source_event_id:  paymentId,
+    _payload_crudo:    pago,
   };
 
-  pagosYaAlertados.add(paymentId);
-  emitirAlerta(alerta, "mp-webhook payment " + paymentId);
+  pagosYaAlertadosEnSesion.add(paymentId);
+  const resultado = emitirAlerta(alerta, "mp-webhook payment " + paymentId);
+  // Si emitirAlerta detectó duplicado en DB (cross-sesión), igual respondemos 200
+  if (resultado && resultado.duplicate) {
+    return res.status(200).json({ ok: true, duplicate: true, paymentId, source: 'db' });
+  }
 
   return res.status(200).json({
     ok: true,

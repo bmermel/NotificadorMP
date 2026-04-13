@@ -10,7 +10,11 @@
   <div id="app">
     <header class="topbar">
       <h1>Alertas de Transferencias</h1>
-      <div id="estadoConexion" class="estado offline">Desconectado</div>
+      <div class="topbar-right">
+        <button id="btnToggleSonido" class="btn-toggle activo" title="Activar/desactivar sonido">🔊 Sonido</button>
+        <button id="btnToggleVoz" class="btn-toggle activo" title="Activar/desactivar voz">🗣 Voz</button>
+        <div id="estadoConexion" class="estado offline">Desconectado</div>
+      </div>
     </header>
 
     <main class="contenido">
@@ -20,26 +24,31 @@
           Esperando transferencias...
         </div>
 
-        <div class="campo-prueba">
-          <label class="campo-prueba-line">
-            <span>Monto</span>
-            <input type="number" id="pruebaMonto" value="18750" step="any" />
-          </label>
-          <label class="campo-prueba-line">
-            <span>Mensaje</span>
-            <input type="text" id="pruebaMensaje" value="Alerta de prueba" />
-          </label>
-          <label class="campo-prueba-line">
-            <span>Titular</span>
-            <input type="text" id="pruebaTitular" placeholder="Opcional" />
-          </label>
-        </div>
-
-        <button type="button" id="btnPrueba">Probar alerta</button>
+        <details class="prueba-section">
+          <summary>Probar alerta manualmente</summary>
+          <div class="campo-prueba">
+            <label class="campo-prueba-line">
+              <span>Monto</span>
+              <input type="number" id="pruebaMonto" value="18750" step="any" />
+            </label>
+            <label class="campo-prueba-line">
+              <span>Mensaje</span>
+              <input type="text" id="pruebaMensaje" value="Alerta de prueba" />
+            </label>
+            <label class="campo-prueba-line">
+              <span>Titular</span>
+              <input type="text" id="pruebaTitular" placeholder="Opcional" />
+            </label>
+          </div>
+          <button type="button" id="btnPrueba">Disparar alerta de prueba</button>
+        </details>
       </section>
 
       <section class="historial-panel">
-        <h2>Historial</h2>
+        <h2>
+          Historial
+          <span id="badgeNoVistos" class="badge-no-vistos" style="display:none"></span>
+        </h2>
         <div id="historial" class="historial"></div>
       </section>
     </main>
@@ -51,6 +60,7 @@
       <div id="overlayMonto" class="overlay-monto">$0</div>
       <div id="overlayTexto" class="overlay-texto"></div>
       <div id="overlayTitular" class="overlay-titular"></div>
+      <button type="button" id="overlayClose" class="overlay-close">Cerrar</button>
     </div>
   </div>
 

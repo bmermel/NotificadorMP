@@ -1,11 +1,43 @@
 /**
  * Proveedores de movimientos de cuenta / actividades (intercambiables).
  *
- * La UI de Mercado Pago (/activities?operation=transfers, p2p_money_transfer, etc.)
- * no expone un REST público documentado equivalente. Las fuentes realistas son:
- * - payments_search: puente sobre el recurso Payment (no es "solo transferencia").
- * - settlement_report_stub: orientado al reporte "Account money" (CSV asíncrono; ver MP docs).
- * - activities_stub: documenta la limitación; no trae datos.
+ * ─────────────────────────────────────────────────────────────────
+ * CONTRATO DE PROVIDER — interfaz para agregar nuevos orígenes de datos
+ * ─────────────────────────────────────────────────────────────────
+ * Un provider expone:
+ *
+ *   {
+ *     name: string,           // identificador corto (ej: "payments_search", "galicia_csv")
+ *     requiresToken: boolean, // si true, ctx.token debe estar configurado
+ *     description: string,    // descripción para logs y /debug
+ *
+ *     fetchMovements: async (ctx) => {
+ *       ok: boolean,
+ *       httpStatus: number | null,
+ *       movements: Array<{
+ *         dedupeId: string,   // ID único del movimiento → usado para deduplicación
+ *         source: string,     // nombre del provider (= provider.name)
+ *         rawPayment: object, // movimiento completo; debe incluir al menos:
+ *                             //   id, status, operation_type, payment_type_id,
+ *                             //   transaction_amount, date_created, date_approved, payer
+ *       }>,
+ *       meta: object,         // metadata libre para diagnóstico
+ *     }
+ *   }
+ *
+ * PARA AGREGAR UN NUEVO PROVIDER (ej. banco Galicia):
+ *   1. Crea createGaliciaProvider() con esta misma interfaz.
+ *   2. Regístralo en getMovementProvider() con su nombre de activación.
+ *   3. Actívalo con MP_ACCOUNT_MOVEMENT_PROVIDER=galicia en .env.
+ *   4. Si el formato del movimiento difiere, agrega un adaptador dentro
+ *      del provider antes de retornar rawPayment (normalizar a la forma estándar).
+ *   ✓ No hace falta tocar server.js, accountMovementMonitor.js ni eventStore.js.
+ * ─────────────────────────────────────────────────────────────────
+ *
+ * Providers implementados (Mercado Pago):
+ *   payments_search        — GET /v1/payments/search (activo)
+ *   settlement_report_stub — STUB; requiere flujo CSV asíncrono (ver MP docs)
+ *   activities_stub        — STUB; /activities UI no tiene REST equivalente público
  */
 
 const { mpGetJsonWithStatus } = require("./mpHttp");

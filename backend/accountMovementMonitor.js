@@ -294,6 +294,9 @@ function normalizePaymentToAlert(payment) {
           : new Date(approvedAt || Date.now()).toISOString(),
       origen: "monitor.transferencias",
       titular: buildTitular(payment.payer),
+      // Metadatos para persistencia en DB (stripped por emitirAlerta antes de emitir al cliente)
+      _provider:        "mercadopago",
+      _source_event_id: paymentId,
     },
   };
 }
