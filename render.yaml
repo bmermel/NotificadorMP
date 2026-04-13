@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: mp-alertas-recepcion
+    env: node
+    plan: free
+    buildCommand: cd backend && npm install --omit=dev
+    startCommand: cd backend && node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        generateValue: false
+        value: "3001"
+      - key: MP_ACCESS_TOKEN
+        sync: false
+      - key: MP_WEBHOOK_SECRET
+        sync: false
+      - key: MP_USE_SIGNATURE_VALIDATION
+        value: "false"
+      - key: MP_TRANSFER_MONITOR_ENABLED
+        value: "true"
+      - key: MP_TRANSFER_MONITOR_INTERVAL_MS
+        value: "30000"
+      - key: MP_TRANSFER_MONITOR_DEBUG
+        value: "true"
+      - key: MP_TRANSFER_ALLOWED_PAYMENT_TYPES
+        value: "bank_transfer,account_money"
+      - key: MP_TRANSFER_ACCEPT_OPERATION_TYPES
+        value: "money_transfer"
