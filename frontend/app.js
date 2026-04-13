@@ -149,7 +149,54 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Síntesis de voz (Speech Synthesis API)
+  // Síntesis de voz — ElevenLabs (principal) + browser TTS (fallback)
+  // ---------------------------------------------------------------------------
+
+  // Detecta si ElevenLabs está disponible al cargar la página
+  var elevenLabsDisponible = false;
+  fetch('/api/tts/status')
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      elevenLabsDisponible = j.elevenlabs === true;
+      console.log('[tts] ElevenLabs disponible:', elevenLabsDisponible);
+    })
+    .catch(function () {
+      elevenLabsDisponible = false;
+    });
+
+  /**
+   * Construye el texto que se va a leer en voz alta.
+   * Podés cambiarlo a tu gusto.
+   */
+  function construirTextoVoz(montoNumerico) {
+    var montoStr = new Intl.NumberFormat('es-AR', {
+      maximumFractionDigits: 0, useGrouping: true,
+    }).format(montoNumerico);
+    return '¡Cayeron ' + montoStr + ' pesos!';
+  }
+
+  /** Llama al backend que hace proxy a ElevenLabs. Retorna una Promise. */
+  function hablarConElevenLabs(texto) {
+    return fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texto: texto }),
+    })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    })
+    .then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var audio = new Audio(url);
+      audio.play();
+      audio.onended = function () { URL.revokeObjectURL(url); };
+      console.log('[tts] ElevenLabs reproduciendo:', texto);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Browser TTS (fallback)
   // ---------------------------------------------------------------------------
 
   function obtenerVoces() {
@@ -163,13 +210,11 @@
 
   function elegirMejorVoz(voices) {
     if (!voices.length) return { voice: null, criterio: 'sin voces' };
-
     var ar = voices.find(function (v) {
       var l = normalizarLang(v.lang);
       return l === 'es-ar' || l.indexOf('es-ar') === 0;
     });
     if (ar) return { voice: ar, criterio: 'es-AR' };
-
     var latinCodes = ['es-419','es-mx','es-uy','es-cl','es-co','es-pe','es-ve','es-us'];
     for (var i = 0; i < latinCodes.length; i++) {
       var code = latinCodes[i];
@@ -179,43 +224,43 @@
       });
       if (found) return { voice: found, criterio: 'es-latam (' + code + ')' };
     }
-
     var cualquierEs = voices.find(function (v) {
       return normalizarLang(v.lang).indexOf('es') === 0;
     });
     if (cualquierEs) return { voice: cualquierEs, criterio: 'cualquier es' };
-
     return { voice: null, criterio: 'motor predeterminado' };
   }
 
-  function hablarMonto(montoNumerico) {
-    if (!vozActiva || !('speechSynthesis' in window)) return;
-    hablarConReintento(montoNumerico, 0);
-  }
-
-  function hablarConReintento(montoNumerico, reintento) {
+  function hablarConBrowser(texto) {
+    if (!('speechSynthesis' in window)) return;
     var voices = obtenerVoces();
-    if (voices.length === 0 && reintento < 8) {
-      setTimeout(function () { hablarConReintento(montoNumerico, reintento + 1); }, 100);
-      return;
-    }
     var sel = elegirMejorVoz(voices);
-    var montoStr = new Intl.NumberFormat('es-AR', {
-      maximumFractionDigits: 0, useGrouping: true,
-    }).format(montoNumerico);
-    var texto = 'Ingresó ' + montoStr + ' pesos';
-    console.log('[speech] texto="' + texto + '" voz=' + (sel.voice ? sel.voice.name : 'default') + ' criterio=' + sel.criterio);
     var u = new SpeechSynthesisUtterance(texto);
     u.rate = 1.1;
     if (sel.voice) { u.voice = sel.voice; u.lang = sel.voice.lang || 'es-AR'; }
     else { u.lang = 'es-AR'; }
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(u);
+    console.log('[speech] browser TTS:', texto, '| voz:', sel.criterio);
+  }
+
+  /** Punto de entrada principal: ElevenLabs si está configurado, browser TTS si no. */
+  function hablarMonto(montoNumerico) {
+    if (!vozActiva) return;
+    var texto = construirTextoVoz(montoNumerico);
+    if (elevenLabsDisponible) {
+      hablarConElevenLabs(texto).catch(function (e) {
+        console.warn('[tts] ElevenLabs falló, usando browser TTS:', e.message);
+        hablarConBrowser(texto);
+      });
+    } else {
+      hablarConBrowser(texto);
+    }
   }
 
   if ('speechSynthesis' in window) {
     window.speechSynthesis.addEventListener('voiceschanged', function () {
-      console.log('[speech] voces cargadas:', obtenerVoces().length);
+      console.log('[speech] voces browser cargadas:', obtenerVoces().length);
     });
   }
 

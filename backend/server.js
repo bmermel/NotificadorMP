@@ -331,6 +331,96 @@ app.patch('/api/eventos/:id/visto', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// API: Text-to-Speech via ElevenLabs (proxy — el API key nunca sale al browser)
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/tts/status
+ * Indica si ElevenLabs está configurado (sin exponer el key).
+ */
+app.get('/api/tts/status', (req, res) => {
+  res.json({
+    ok: true,
+    elevenlabs: secretConfigured('ELEVENLABS_API_KEY'),
+    voiceId: process.env.ELEVENLABS_VOICE_ID || '(default)',
+  });
+});
+
+/**
+ * POST /api/tts
+ * Body: { texto: string }
+ * Devuelve audio/mpeg generado por ElevenLabs.
+ * Si no está configurado devuelve 503 y el frontend cae a browser TTS.
+ */
+app.post('/api/tts', async (req, res) => {
+  const apiKey = process.env.ELEVENLABS_API_KEY
+    ? String(process.env.ELEVENLABS_API_KEY).trim()
+    : '';
+  if (!apiKey) {
+    return res.status(503).json({ ok: false, error: 'ELEVENLABS_API_KEY no configurado' });
+  }
+
+  const texto = req.body && typeof req.body.texto === 'string'
+    ? req.body.texto.trim()
+    : '';
+  if (!texto) {
+    return res.status(400).json({ ok: false, error: 'texto requerido' });
+  }
+  if (texto.length > 500) {
+    return res.status(400).json({ ok: false, error: 'texto demasiado largo (máx 500 chars)' });
+  }
+
+  const voiceId = process.env.ELEVENLABS_VOICE_ID
+    ? String(process.env.ELEVENLABS_VOICE_ID).trim()
+    : 'cgSgspJ2msm6clMCkdW9'; // default: Liam (multilingual, neutro, claro)
+
+  const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
+
+  try {
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',
+        },
+        body: JSON.stringify({
+          text: texto,
+          model_id: modelId,
+          voice_settings: {
+            stability: 0.45,
+            similarity_boost: 0.80,
+            style: 0.3,
+            use_speaker_boost: true,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      console.error('[tts] ElevenLabs error HTTP', response.status, errBody.slice(0, 300));
+      return res.status(502).json({
+        ok: false,
+        error: 'ElevenLabs error',
+        status: response.status,
+      });
+    }
+
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Cache-Control', 'no-store');
+    res.send(audioBuffer);
+    console.log('[tts] audio generado', audioBuffer.length, 'bytes para:', texto);
+  } catch (e) {
+    console.error('[tts] excepción llamando a ElevenLabs:', e.message);
+    res.status(502).json({ ok: false, error: 'Error conectando a ElevenLabs' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Socket.io — al conectar, envía historial de la DB al cliente
 // ---------------------------------------------------------------------------
 
@@ -373,6 +463,9 @@ server.listen(PORT, () => {
   console.log('[servidor] GET  /api/eventos');
   console.log('[servidor] GET  /api/eventos/:id');
   console.log('[servidor] PATCH /api/eventos/:id/visto');
+  console.log('[servidor] GET  /api/tts/status');
+  console.log('[servidor] POST /api/tts  (ElevenLabs proxy)');
   console.log(`[servidor] MP_WEBHOOK_PAYMENT_ENABLED=${webhookPaymentEnabled}`);
+  console.log(`[servidor] ElevenLabs configurado: ${secretConfigured('ELEVENLABS_API_KEY')}`);
   transferMonitor.start();
 });
